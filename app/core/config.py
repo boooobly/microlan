@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-APP_NAME = "LAN голосовые звонки"
+# Release metadata (single source of truth for app identity/version in Python runtime).
+APP_NAME = "LAN голосовые звонки"  # Display name for users.
+APP_INTERNAL_NAME = "microlan"  # Internal short name for build/release tooling.
 APP_VERSION = "0.2.0"
 APP_ORG = "Microlan"
 APP_ICON_RELATIVE_PATH = "assets/icon.ico"

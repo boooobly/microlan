@@ -89,25 +89,56 @@ python -m app.main
 
 Если файла нет, приложение работает без падения.
 
-## Сборка Windows .exe через PyInstaller
-Добавлен скрипт `build_windows.bat`.
+## Сборка Windows portable (PyInstaller onedir)
+Для desktop-приложения используется **onedir** (а не onefile), потому что:
+- onedir стабильнее для GUI + аудио зависимостей;
+- проще диагностировать отсутствующие DLL/ресурсы;
+- удобнее собирать установщик Inno Setup.
 
-### 1) Установить PyInstaller (отдельно)
-PyInstaller не добавлен в runtime-зависимости приложения, установите его отдельно:
+### 1) Установить PyInstaller отдельно
+PyInstaller не является runtime-зависимостью приложения:
 ```bash
 pip install pyinstaller
 ```
 
-### 2) Запустить сборку
-На Windows в корне проекта:
+### 2) Собрать portable onedir
+В корне проекта на Windows:
 ```bat
 build_windows.bat
 ```
 
-Скрипт собирает GUI-приложение:
-- без консоли (`--noconsole`);
-- с entrypoint `app/main.py`;
-- с optional `assets/icon.ico`, если файл существует.
+Скрипт:
+- очищает старые `build/` и `dist/microlan/`;
+- запускает `pyinstaller microlan.spec --noconfirm`;
+- собирает portable-приложение в `dist/microlan/`.
+
+Главный exe после сборки:
+- `dist/microlan/microlan.exe`
+
+## Сборка установщика (Inno Setup)
+### 1) Установить Inno Setup
+Скачайте и установите Inno Setup 6:
+- https://jrsoftware.org/isdl.php
+
+### 2) Убедиться, что portable-сборка уже есть
+Сначала выполните:
+```bat
+build_windows.bat
+```
+
+### 3) Собрать установщик
+```bat
+build_installer.bat
+```
+
+Скрипт `build_installer.bat`:
+- проверяет наличие `dist/microlan/microlan.exe`;
+- запускает `installer/microlan_installer.iss` через `ISCC.exe`;
+- если `ISCC.exe` не найден, печатает понятную инструкцию.
+
+Где искать setup-файл:
+- папка `dist/`
+- имя вида `microlan_setup_0.2.0.exe`
 
 ## Если после сборки не находятся аудиоустройства
 - Запустите `.exe` от имени пользователя с доступом к аудио устройствам.
@@ -142,5 +173,5 @@ ifconfig
 ## Текущие ограничения
 - Используется raw PCM (без Opus-кодека).
 - Нет NAT traversal и интернет-звонков.
-- Нет установщика.
+- Нет Opus и интернет-аккаунтов.
 - Нет эхоподавления.
