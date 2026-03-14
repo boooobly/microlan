@@ -38,6 +38,7 @@ from app.core.devices import (
     list_input_devices_with_indices,
     list_output_devices_with_indices,
 )
+from app.core.i18n import ERROR_TEXTS, UI_TEXTS, format_status_line
 from app.core.states import CallState
 from app.core.utils import format_log_line
 
@@ -51,7 +52,7 @@ class UiEvents(QObject):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("LAN Voice Calls")
+        self.setWindowTitle(UI_TEXTS["window_title"])
         self.resize(860, 760)
 
         self.events = UiEvents()
@@ -81,52 +82,52 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
 
-        local_group = QGroupBox("Local settings")
+        local_group = QGroupBox(UI_TEXTS["group_local"])
         local_form = QFormLayout(local_group)
         self.local_signaling_port_input = QLineEdit(str(DEFAULT_SIGNALING_PORT))
         self.local_audio_port_input = QLineEdit(str(DEFAULT_AUDIO_PORT))
-        self.local_ip_label = QLabel("Unknown")
-        self.apply_listener_button = QPushButton("Apply / Restart listener")
-        local_form.addRow("Local signaling port", self.local_signaling_port_input)
-        local_form.addRow("Local audio port", self.local_audio_port_input)
-        local_form.addRow("Local IP", self.local_ip_label)
+        self.local_ip_label = QLabel(UI_TEXTS["unknown"])
+        self.apply_listener_button = QPushButton(UI_TEXTS["btn_apply_listener"])
+        local_form.addRow(UI_TEXTS["label_local_signaling_port"], self.local_signaling_port_input)
+        local_form.addRow(UI_TEXTS["label_local_audio_port"], self.local_audio_port_input)
+        local_form.addRow(UI_TEXTS["label_local_ip"], self.local_ip_label)
         local_form.addRow(self.apply_listener_button)
         root.addWidget(local_group)
 
-        devices_group = QGroupBox("Audio devices")
+        devices_group = QGroupBox(UI_TEXTS["group_devices"])
         devices_form = QFormLayout(devices_group)
         self.input_device_combo = QComboBox()
         self.output_device_combo = QComboBox()
-        self.refresh_devices_button = QPushButton("Refresh devices")
-        devices_form.addRow("Input device", self.input_device_combo)
-        devices_form.addRow("Output device", self.output_device_combo)
+        self.refresh_devices_button = QPushButton(UI_TEXTS["btn_refresh_devices"])
+        devices_form.addRow(UI_TEXTS["label_input_device"], self.input_device_combo)
+        devices_form.addRow(UI_TEXTS["label_output_device"], self.output_device_combo)
         devices_form.addRow(self.refresh_devices_button)
         root.addWidget(devices_group)
 
-        peer_group = QGroupBox("Peer settings")
+        peer_group = QGroupBox(UI_TEXTS["group_peer"])
         peer_form = QFormLayout(peer_group)
         self.peer_ip_input = QLineEdit()
-        self.peer_ip_input.setPlaceholderText("192.168.1.50")
+        self.peer_ip_input.setPlaceholderText(UI_TEXTS["peer_ip_placeholder"])
         self.peer_signaling_port_input = QLineEdit(str(DEFAULT_SIGNALING_PORT))
         self.peer_audio_port_input = QLineEdit(str(DEFAULT_AUDIO_PORT))
-        peer_form.addRow("Peer IP", self.peer_ip_input)
-        peer_form.addRow("Peer signaling port", self.peer_signaling_port_input)
-        peer_form.addRow("Peer audio port", self.peer_audio_port_input)
+        peer_form.addRow(UI_TEXTS["label_peer_ip"], self.peer_ip_input)
+        peer_form.addRow(UI_TEXTS["label_peer_signaling_port"], self.peer_signaling_port_input)
+        peer_form.addRow(UI_TEXTS["label_peer_audio_port"], self.peer_audio_port_input)
         root.addWidget(peer_group)
 
-        call_group = QGroupBox("Call controls")
+        call_group = QGroupBox(UI_TEXTS["group_call"])
         call_row = QHBoxLayout(call_group)
-        self.call_button = QPushButton("Call")
-        self.hangup_button = QPushButton("Hang Up")
-        self.accept_button = QPushButton("Accept")
-        self.decline_button = QPushButton("Decline")
+        self.call_button = QPushButton(UI_TEXTS["btn_call"])
+        self.hangup_button = QPushButton(UI_TEXTS["btn_hangup"])
+        self.accept_button = QPushButton(UI_TEXTS["btn_accept"])
+        self.decline_button = QPushButton(UI_TEXTS["btn_decline"])
         call_row.addWidget(self.call_button)
         call_row.addWidget(self.hangup_button)
         call_row.addWidget(self.accept_button)
         call_row.addWidget(self.decline_button)
         root.addWidget(call_group)
 
-        audio_group = QGroupBox("Audio controls")
+        audio_group = QGroupBox(UI_TEXTS["group_audio"])
         audio_form = QFormLayout(audio_group)
         self.mic_gain_slider = QSlider(Qt.Horizontal)
         self.mic_gain_slider.setRange(0, 300)
@@ -136,7 +137,7 @@ class MainWindow(QMainWindow):
         gain_row.addWidget(self.mic_gain_slider)
         gain_row.addWidget(self.mic_gain_label)
 
-        self.noise_gate_enabled = QCheckBox("Noise gate enabled")
+        self.noise_gate_enabled = QCheckBox(UI_TEXTS["checkbox_noise_gate"])
         self.noise_gate_enabled.setChecked(NOISE_GATE_ENABLED_DEFAULT)
 
         self.noise_gate_slider = QSlider(Qt.Horizontal)
@@ -147,35 +148,35 @@ class MainWindow(QMainWindow):
         gate_row.addWidget(self.noise_gate_slider)
         gate_row.addWidget(self.noise_gate_label)
 
-        self.noise_suppression_enabled = QCheckBox("Noise suppression enabled")
+        self.noise_suppression_enabled = QCheckBox(UI_TEXTS["checkbox_noise_suppression"])
         self.noise_suppression_enabled.setChecked(NOISE_SUPPRESSION_ENABLED_DEFAULT)
-        self.noise_suppression_status = QLabel("Unavailable")
+        self.noise_suppression_status = QLabel("Недоступно")
 
         suppression_row = QHBoxLayout()
         suppression_row.addWidget(self.noise_suppression_enabled)
-        suppression_row.addWidget(QLabel("Status:"))
+        suppression_row.addWidget(QLabel(UI_TEXTS["label_noise_suppression_status"]))
         suppression_row.addWidget(self.noise_suppression_status)
         suppression_row.addStretch(1)
 
-        self.mute_mic_checkbox = QCheckBox("Mute microphone")
+        self.mute_mic_checkbox = QCheckBox(UI_TEXTS["checkbox_mute"])
         self.mute_mic_checkbox.setChecked(False)
 
-        self.input_level_label = QLabel("Input level: 0.000")
+        self.input_level_label = QLabel(f"{UI_TEXTS['label_input_level']}: 0.000")
 
-        audio_form.addRow("Mic sensitivity", gain_row)
-        audio_form.addRow("Noise gate", self.noise_gate_enabled)
-        audio_form.addRow("Noise gate threshold", gate_row)
-        audio_form.addRow("Noise suppression", suppression_row)
-        audio_form.addRow("Microphone", self.mute_mic_checkbox)
-        audio_form.addRow("Live", self.input_level_label)
+        audio_form.addRow(UI_TEXTS["label_mic_sensitivity"], gain_row)
+        audio_form.addRow(UI_TEXTS["label_noise_gate"], self.noise_gate_enabled)
+        audio_form.addRow(UI_TEXTS["label_noise_gate_threshold"], gate_row)
+        audio_form.addRow(UI_TEXTS["label_noise_suppression"], suppression_row)
+        audio_form.addRow(UI_TEXTS["label_mic_mute"], self.mute_mic_checkbox)
+        audio_form.addRow(UI_TEXTS["label_input_level"], self.input_level_label)
         root.addWidget(audio_group)
 
-        self.status_label = QLabel("Status: Initializing")
+        self.status_label = QLabel(UI_TEXTS["status_init"])
         root.addWidget(self.status_label)
 
         self.log_area = QPlainTextEdit()
         self.log_area.setReadOnly(True)
-        self.log_area.setPlaceholderText("Event log")
+        self.log_area.setPlaceholderText(UI_TEXTS["log_placeholder"])
         root.addWidget(self.log_area)
 
         self.apply_listener_button.clicked.connect(self._on_apply_listener)
@@ -196,7 +197,7 @@ class MainWindow(QMainWindow):
     def _parse_port(self, text: str) -> int:
         value = int(text.strip())
         if not 1 <= value <= 65535:
-            raise ValueError("Port must be in 1..65535")
+            raise ValueError(ERROR_TEXTS["err_port_range"])
         return value
 
     def _parse_local(self) -> tuple[int, int]:
@@ -208,7 +209,7 @@ class MainWindow(QMainWindow):
     def _parse_peer(self) -> tuple[str, int, int]:
         ip = self.peer_ip_input.text().strip()
         if not ip:
-            raise ValueError("Peer IP is required")
+            raise ValueError(ERROR_TEXTS["err_peer_ip_required"])
         return (
             ip,
             self._parse_port(self.peer_signaling_port_input.text()),
@@ -234,9 +235,9 @@ class MainWindow(QMainWindow):
             self._restart_listener()
             self._apply_audio_settings()
         except ValueError as exc:
-            QMessageBox.warning(self, "Invalid local settings", str(exc))
+            QMessageBox.warning(self, ERROR_TEXTS["title_invalid_local"], str(exc))
         except RuntimeError as exc:
-            QMessageBox.critical(self, "Listener error", str(exc))
+            QMessageBox.critical(self, ERROR_TEXTS["title_listener_error"], str(exc))
 
     def _restart_listener(self) -> None:
         signaling_port, audio_port = self._parse_local()
@@ -246,14 +247,8 @@ class MainWindow(QMainWindow):
         try:
             ip, sig_port, audio_port = self._parse_peer()
         except ValueError as exc:
-            QMessageBox.warning(self, "Invalid peer settings", str(exc))
+            QMessageBox.warning(self, ERROR_TEXTS["title_invalid_peer"], str(exc))
             return
-        self.call_manager.call(ip=ip, signaling_port=sig_port, audio_port=audio_port)
-
-    def _refresh_local_ip(self) -> None:
-        self.local_ip_label.setText(self.call_manager.get_local_ip())
-
-        self._apply_audio_settings()
         self.call_manager.call(ip=ip, signaling_port=sig_port, audio_port=audio_port)
 
     def _refresh_local_ip(self) -> None:
@@ -286,11 +281,11 @@ class MainWindow(QMainWindow):
 
         if self._input_devices:
             self.events.log.emit(
-                format_log_line(f"selected input device: {get_device_name(self._selected_input_device_index())}")
+                format_log_line(f"выбрано устройство ввода: {get_device_name(self._selected_input_device_index())}")
             )
         if self._output_devices:
             self.events.log.emit(
-                format_log_line(f"selected output device: {get_device_name(self._selected_output_device_index())}")
+                format_log_line(f"выбрано устройство вывода: {get_device_name(self._selected_output_device_index())}")
             )
 
     @staticmethod
@@ -340,31 +335,31 @@ class MainWindow(QMainWindow):
 
     def _on_state_changed(self, state_value: str, message: str) -> None:
         state = CallState(state_value)
-        self.status_label.setText(f"Status: {state.value} — {message}")
+        self.status_label.setText(format_status_line(state.value, message))
         self.call_button.setEnabled(state in {CallState.IDLE, CallState.ENDED})
         self.accept_button.setEnabled(state == CallState.RINGING)
         self.decline_button.setEnabled(state == CallState.RINGING)
         self.hangup_button.setEnabled(state in {CallState.CALLING, CallState.RINGING, CallState.IN_CALL})
 
     def _on_input_level(self, level: float) -> None:
-        self.input_level_label.setText(f"Input level: {level:.3f}")
+        self.input_level_label.setText(f"{UI_TEXTS['label_input_level']}: {level:.3f}")
 
     def _append_log(self, message: str) -> None:
         self.log_area.appendPlainText(message)
 
     def _log_device_diagnostics(self) -> None:
         if not self._input_devices:
-            self.events.log.emit(format_log_line("warning: no input audio devices found"))
-            self.status_label.setText("Status: WARNING — No input device")
+            self.events.log.emit(format_log_line("предупреждение: устройства ввода не найдены"))
+            self.status_label.setText("Статус: Ошибка, устройство ввода не найдено")
         if not self._output_devices:
-            self.events.log.emit(format_log_line("warning: no output audio devices found"))
-            self.status_label.setText("Status: WARNING — No output device")
+            self.events.log.emit(format_log_line("предупреждение: устройства вывода не найдены"))
+            self.status_label.setText("Статус: Ошибка, устройство вывода не найдено")
 
         self.events.log.emit(
-            format_log_line(f"default input device: {get_device_name(get_default_input_device_index())}")
+            format_log_line(f"устройство ввода по умолчанию: {get_device_name(get_default_input_device_index())}")
         )
         self.events.log.emit(
-            format_log_line(f"default output device: {get_device_name(get_default_output_device_index())}")
+            format_log_line(f"устройство вывода по умолчанию: {get_device_name(get_default_output_device_index())}")
         )
 
     def closeEvent(self, event) -> None:  # noqa: N802

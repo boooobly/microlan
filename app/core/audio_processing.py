@@ -9,7 +9,7 @@ import numpy as np
 RNNOISE_FRAME_SIZE = 480  # 10 ms at 48 kHz
 
 _BACKEND_READY = False
-_BACKEND_NAME = "Unavailable"
+_BACKEND_NAME = "Недоступно"
 _BACKEND_ERROR: str | None = None
 _BACKEND_WARNED = False
 _RNNOISE_CLASS = None
@@ -27,7 +27,7 @@ except Exception as exc_rnnoise:  # noqa: BLE001
         _BACKEND_READY = True
         _BACKEND_NAME = "pyrnnoise"
     except Exception as exc_pyrnnoise:  # noqa: BLE001
-        _BACKEND_ERROR = f"rnnoise import failed ({exc_rnnoise}); pyrnnoise import failed ({exc_pyrnnoise})"
+        _BACKEND_ERROR = f"не удалось импортировать rnnoise ({exc_rnnoise}); не удалось импортировать pyrnnoise ({exc_pyrnnoise})"
 
 
 def noise_suppression_is_available() -> bool:
@@ -35,13 +35,13 @@ def noise_suppression_is_available() -> bool:
 
 
 def noise_suppression_backend_status_text() -> str:
-    return "Available" if _BACKEND_READY else "Unavailable"
+    return "Доступно" if _BACKEND_READY else "Недоступно"
 
 
 def noise_suppression_backend_details() -> str:
     if _BACKEND_READY:
-        return f"RNNoise backend: {_BACKEND_NAME}"
-    return f"RNNoise backend unavailable: {_BACKEND_ERROR or 'binding not installed'}"
+        return f"Бэкенд RNNoise: {_BACKEND_NAME}"
+    return f"Бэкенд RNNoise недоступен: {_BACKEND_ERROR or 'биндинг не установлен'}"
 
 
 def _to_float32(audio_block: np.ndarray) -> np.ndarray:
@@ -149,5 +149,5 @@ def process_noise_suppression(
     except Exception as exc:  # noqa: BLE001
         if not _BACKEND_WARNED and on_log:
             _BACKEND_WARNED = True
-            on_log(f"noise suppression backend failed, bypassing: {exc}")
+            on_log(f"сбой бэкенда шумоподавления, обработка отключена: {exc}")
         return audio_block

@@ -15,6 +15,7 @@ from app.core.audio_processing import (
 from app.core.config import CALL_TIMEOUT_SECONDS, DEFAULT_AUDIO_PORT, DEFAULT_SIGNALING_PORT
 from app.core.devices import get_device_name, resolve_device_index_or_default
 from app.core.signaling import SignalingClient, build_message, detect_local_ip
+from app.core.i18n import state_display_name
 from app.core.states import CallState
 
 
@@ -58,8 +59,8 @@ class CallManager:
             on_log=self.on_log,
         )
         self.signaling.start()
-        self.on_log(f"signaling listening on UDP {signaling_port}")
-        self._set_state(CallState.IDLE, "Ready")
+        self.on_log(f"прослушивание signaling на UDP {signaling_port}")
+        self._set_state(CallState.IDLE, "готов к работе")
 
     def shutdown(self) -> None:
         self._cancel_call_timeout()
@@ -107,24 +108,24 @@ class CallManager:
 
     def call(self, ip: str, signaling_port: int, audio_port: int) -> None:
         if self.state not in {CallState.IDLE, CallState.ENDED}:
-            self.on_log("outgoing CALL ignored: invalid state")
+            self.on_log("исходящий вызов проигнорирован, неверное состояние")
             return
         if not self.signaling:
-            self._set_state(CallState.ERROR, "Signaling listener is not active")
+            self._set_state(CallState.ERROR, "прослушивание signaling не запущено")
             return
 
         self.current_peer = Peer(ip=ip, signaling_port=signaling_port, audio_port=audio_port)
         in_name = get_device_name(self.audio_engine.settings.selected_input_device)
         out_name = get_device_name(self.audio_engine.settings.selected_output_device)
-        self.on_log(f"audio devices for call: input={in_name}; output={out_name}")
+        self.on_log(f"устройства для звонка: микрофон={in_name}; вывод={out_name}")
 
         self._send(self.current_peer, "CALL")
-        self._set_state(CallState.CALLING, f"Calling {ip}:{signaling_port}")
+        self._set_state(CallState.CALLING, f"вызов {ip}:{signaling_port}")
         self._start_call_timeout()
 
     def accept(self) -> None:
         if self.state != CallState.RINGING or not self.pending_peer:
-            self.on_log("ACCEPT ignored: no ringing peer")
+            self.on_log("принятие вызова проигнорировано: нет входящего вызова")
             return
         self.current_peer = self.pending_peer
         self.pending_peer = None
@@ -133,19 +134,19 @@ class CallManager:
 
     def decline(self) -> None:
         if self.state != CallState.RINGING or not self.pending_peer:
-            self.on_log("DECLINE ignored: no ringing peer")
+            self.on_log("отклонение вызова проигнорировано: нет входящего вызова")
             return
         self._send(self.pending_peer, "DECLINE")
         self.pending_peer = None
-        self._set_state(CallState.ENDED, "Incoming call declined")
+        self._set_state(CallState.ENDED, "входящий звонок отклонен")
 
     def hangup(self) -> None:
         if self.state not in {CallState.CALLING, CallState.RINGING, CallState.IN_CALL}:
-            self.on_log("HANGUP ignored: no active call")
+            self.on_log("завершение звонка проигнорировано: нет активного звонка")
             return
         if self.current_peer:
             self._send(self.current_peer, "HANGUP")
-        self._end_call("Call ended")
+        self._end_call("звонок завершен")
 
     def get_local_ip(self) -> str:
         return detect_local_ip()
@@ -165,7 +166,7 @@ class CallManager:
                 remote_audio_port=peer.audio_port,
                 local_audio_port=self.local_audio_port,
             )
-            self._set_state(CallState.IN_CALL, f"In call with {peer.ip}")
+            self._set_state(CallState.IN_CALL, f"соединение с {peer.ip}")
         except RuntimeError as exc:
             self._set_state(CallState.ERROR, str(exc))
 
@@ -178,16 +179,16 @@ class CallManager:
                 audio_port=int(message["audio_port"]),
             )
         except (KeyError, ValueError, TypeError) as exc:
-            self.on_log(f"invalid signaling payload ignored in manager: {exc}")
+            self.on_log(f"некорректный signaling-пакет проигнорирован в менеджере: {exc}")
             return
 
         if msg_type == "CALL":
             if self.state in {CallState.CALLING, CallState.RINGING, CallState.IN_CALL}:
-                self.on_log(f"incoming CALL from {peer.ip} -> BUSY")
+                self.on_log(f"входящий вызов от {peer.ip}: отправлен ответ BUSY")
                 self._send(peer, "BUSY")
                 return
             self.pending_peer = peer
-            self._set_state(CallState.RINGING, f"Incoming call from {peer.ip}")
+            self._set_state(CallState.RINGING, f"звонит {peer.ip}")
             return
 
         if msg_type == "ACCEPT":
@@ -197,20 +198,20 @@ class CallManager:
 
         if msg_type == "DECLINE":
             if self.state == CallState.CALLING:
-                self._end_call("Call declined by peer")
+                self._end_call("вызов отклонен на втором ПК")
             return
 
         if msg_type == "HANGUP":
             if self.state in {CallState.CALLING, CallState.RINGING, CallState.IN_CALL}:
-                self._end_call("Peer ended call")
+                self._end_call("второй ПК завершил звонок")
             return
 
         if msg_type == "BUSY" and self.state == CallState.CALLING:
-            self._end_call("Peer is busy")
+            self._end_call("второй ПК занят")
 
     def _send(self, peer: Peer, msg_type: str) -> None:
         if not self.signaling:
-            self.on_log(f"cannot send {msg_type}: signaling unavailable")
+            self.on_log(f"не удалось отправить {msg_type}: signaling недоступен")
             return
         payload = build_message(
             msg_type=msg_type,
@@ -237,9 +238,9 @@ class CallManager:
 
     def _on_call_timeout(self) -> None:
         if self.state == CallState.CALLING:
-            self._end_call("Call timeout (25s)")
+            self._end_call("время ожидания ответа истекло")
 
     def _set_state(self, state: CallState, text: str) -> None:
         self.state = state
         self.on_state_changed(state, text)
-        self.on_log(f"state -> {state.value}: {text}")
+        self.on_log(f"состояние -> {state_display_name(state.value)}: {text}")
