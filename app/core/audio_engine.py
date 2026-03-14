@@ -13,8 +13,8 @@ from app.core.config import AUDIO_QUEUE_MAX_BLOCKS, BLOCKSIZE, CHANNELS, DTYPE, 
 
 
 class AudioEngine:
-    def __init__(self, on_error: Callable[[str], None]) -> None:
-        self.on_error = on_error
+    def __init__(self, on_log: Callable[[str], None]) -> None:
+        self.on_log = on_log
         self._send_sock: socket.socket | None = None
         self._recv_sock: socket.socket | None = None
         self._recv_thread: threading.Thread | None = None
@@ -24,7 +24,6 @@ class AudioEngine:
         self._output_stream: sd.RawOutputStream | None = None
         self.remote_host: str | None = None
         self.remote_audio_port: int | None = None
-        self.local_audio_port: int | None = None
 
     def start(self, remote_host: str, remote_audio_port: int, local_audio_port: int) -> None:
         if self.is_running:
@@ -32,15 +31,15 @@ class AudioEngine:
 
         self.remote_host = remote_host
         self.remote_audio_port = remote_audio_port
-        self.local_audio_port = local_audio_port
 
         try:
             self._send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self._recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self._recv_sock.bind((RECEIVE_HOST, local_audio_port))
+            self._recv_sock.settimeout(0.5)
         except OSError as exc:
             self.stop()
-            raise RuntimeError(f"Failed to open audio UDP sockets: {exc}") from exc
+            raise RuntimeError(f"failed to open audio UDP sockets: {exc}") from exc
 
         self._stop_event.clear()
         self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
@@ -63,12 +62,13 @@ class AudioEngine:
             )
             self._input_stream.start()
             self._output_stream.start()
+            self.on_log("audio engine started")
         except sd.PortAudioError as exc:
             self.stop()
-            raise RuntimeError(f"Audio device/stream error: {exc}") from exc
+            raise RuntimeError(f"audio device/stream error: {exc}") from exc
         except Exception as exc:
             self.stop()
-            raise RuntimeError(f"Failed to start audio engine: {exc}") from exc
+            raise RuntimeError(f"failed to start audio engine: {exc}") from exc
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -113,6 +113,10 @@ class AudioEngine:
             except queue.Empty:
                 break
 
+        self.remote_host = None
+        self.remote_audio_port = None
+        self.on_log("audio engine stopped")
+
     @property
     def is_running(self) -> bool:
         return self._input_stream is not None and self._output_stream is not None
@@ -132,28 +136,30 @@ class AudioEngine:
                     except queue.Empty:
                         pass
                 self._incoming_blocks.put_nowait(payload)
+            except socket.timeout:
+                continue
             except OSError:
                 break
             except Exception as exc:
-                self.on_error(f"Audio receive error: {exc}")
+                self.on_log(f"audio receive error: {exc}")
 
     def _input_callback(self, indata: bytes, frames: int, _time_info, status) -> None:
         try:
             if status:
-                self.on_error(f"Input stream warning: {status}")
+                self.on_log(f"input stream warning: {status}")
             if frames != BLOCKSIZE:
                 return
             if not self._send_sock or not self.remote_host or not self.remote_audio_port:
                 return
             self._send_sock.sendto(indata, (self.remote_host, self.remote_audio_port))
         except Exception as exc:  # noqa: BLE001
-            self.on_error(f"Audio input callback error: {exc}")
+            self.on_log(f"audio send/callback error: {exc}")
             raise sd.CallbackAbort from exc
 
     def _output_callback(self, outdata: bytearray, frames: int, _time_info, status) -> None:
         try:
             if status:
-                self.on_error(f"Output stream warning: {status}")
+                self.on_log(f"output stream warning: {status}")
             if frames != BLOCKSIZE:
                 outdata[:] = b"\x00" * len(outdata)
                 return
@@ -164,5 +170,5 @@ class AudioEngine:
                 return
             outdata[:] = block
         except Exception as exc:  # noqa: BLE001
-            self.on_error(f"Audio output callback error: {exc}")
+            self.on_log(f"audio playback/callback error: {exc}")
             raise sd.CallbackAbort from exc

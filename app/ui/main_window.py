@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
-    QGridLayout,
+    QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -19,6 +20,13 @@ from PySide6.QtWidgets import (
 
 from app.core.call_manager import CallManager
 from app.core.config import DEFAULT_AUDIO_PORT, DEFAULT_SIGNALING_PORT
+from app.core.devices import (
+    get_default_input_device,
+    get_default_output_device,
+    get_device_name,
+    list_input_devices,
+    list_output_devices,
+)
 from app.core.states import CallState
 
 
@@ -31,7 +39,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Mini LAN Voice Call MVP")
-        self.resize(700, 420)
+        self.resize(760, 500)
 
         self.events = UiEvents()
         self.events.state_changed.connect(self._on_state_changed)
@@ -43,41 +51,48 @@ class MainWindow(QMainWindow):
         )
 
         self._build_ui()
-        self._start_signaling_from_inputs()
+        self._refresh_local_ip_label()
+        self._log_device_diagnostics()
+        self._apply_local_listener_settings()
 
     def _build_ui(self) -> None:
         central = QWidget(self)
         self.setCentralWidget(central)
-
         layout = QVBoxLayout(central)
 
-        form_layout = QGridLayout()
-        layout.addLayout(form_layout)
+        local_group = QGroupBox("Local settings")
+        local_form = QFormLayout(local_group)
+        self.local_signaling_port_input = QLineEdit(str(DEFAULT_SIGNALING_PORT))
+        self.local_audio_port_input = QLineEdit(str(DEFAULT_AUDIO_PORT))
+        self.local_ip_label = QLabel("Unknown")
+        self.apply_listener_button = QPushButton("Apply / Restart listener")
+        local_form.addRow("Local signaling port:", self.local_signaling_port_input)
+        local_form.addRow("Local audio port:", self.local_audio_port_input)
+        local_form.addRow("Local IP:", self.local_ip_label)
+        local_form.addRow(self.apply_listener_button)
+        layout.addWidget(local_group)
 
-        self.ip_input = QLineEdit()
-        self.ip_input.setPlaceholderText("192.168.1.50")
-        self.signaling_port_input = QLineEdit(str(DEFAULT_SIGNALING_PORT))
-        self.audio_port_input = QLineEdit(str(DEFAULT_AUDIO_PORT))
-
-        form_layout.addWidget(QLabel("Peer IP:"), 0, 0)
-        form_layout.addWidget(self.ip_input, 0, 1)
-        form_layout.addWidget(QLabel("Signaling Port:"), 1, 0)
-        form_layout.addWidget(self.signaling_port_input, 1, 1)
-        form_layout.addWidget(QLabel("Audio Port:"), 2, 0)
-        form_layout.addWidget(self.audio_port_input, 2, 1)
+        peer_group = QGroupBox("Peer settings")
+        peer_form = QFormLayout(peer_group)
+        self.peer_ip_input = QLineEdit()
+        self.peer_ip_input.setPlaceholderText("192.168.1.50")
+        self.peer_signaling_port_input = QLineEdit(str(DEFAULT_SIGNALING_PORT))
+        self.peer_audio_port_input = QLineEdit(str(DEFAULT_AUDIO_PORT))
+        peer_form.addRow("Peer IP:", self.peer_ip_input)
+        peer_form.addRow("Peer signaling port:", self.peer_signaling_port_input)
+        peer_form.addRow("Peer audio port:", self.peer_audio_port_input)
+        layout.addWidget(peer_group)
 
         buttons_row = QHBoxLayout()
-        layout.addLayout(buttons_row)
-
         self.call_button = QPushButton("Call")
         self.hangup_button = QPushButton("Hang Up")
         self.accept_button = QPushButton("Accept")
         self.decline_button = QPushButton("Decline")
-
         buttons_row.addWidget(self.call_button)
         buttons_row.addWidget(self.hangup_button)
         buttons_row.addWidget(self.accept_button)
         buttons_row.addWidget(self.decline_button)
+        layout.addLayout(buttons_row)
 
         self.log_area = QPlainTextEdit()
         self.log_area.setReadOnly(True)
@@ -87,43 +102,58 @@ class MainWindow(QMainWindow):
         self.setStatusBar(status)
         self.statusBar().showMessage("Initializing...")
 
+        self.apply_listener_button.clicked.connect(self._on_apply_listener_clicked)
         self.call_button.clicked.connect(self._on_call_clicked)
         self.hangup_button.clicked.connect(self._on_hangup_clicked)
         self.accept_button.clicked.connect(self._on_accept_clicked)
         self.decline_button.clicked.connect(self._on_decline_clicked)
 
-    def _parse_ports(self) -> tuple[int, int] | None:
-        try:
-            signaling_port = int(self.signaling_port_input.text().strip())
-            audio_port = int(self.audio_port_input.text().strip())
-            if not (1 <= signaling_port <= 65535 and 1 <= audio_port <= 65535):
-                raise ValueError
-            return signaling_port, audio_port
-        except ValueError:
-            QMessageBox.critical(self, "Invalid ports", "Ports must be integers in range 1..65535.")
-            return None
+    def _refresh_local_ip_label(self) -> None:
+        local_ip = self.call_manager.get_local_ip()
+        self.local_ip_label.setText(local_ip if local_ip else "Unknown")
 
-    def _start_signaling_from_inputs(self) -> None:
-        parsed = self._parse_ports()
-        if not parsed:
-            return
-        signaling_port, audio_port = parsed
+    def _parse_port(self, text: str) -> int:
+        port = int(text.strip())
+        if not 1 <= port <= 65535:
+            raise ValueError
+        return port
+
+    def _parse_local_ports(self) -> tuple[int, int]:
+        return (
+            self._parse_port(self.local_signaling_port_input.text()),
+            self._parse_port(self.local_audio_port_input.text()),
+        )
+
+    def _parse_peer_settings(self) -> tuple[str, int, int]:
+        ip = self.peer_ip_input.text().strip()
+        if not ip:
+            raise ValueError("Peer IP is required")
+        return (
+            ip,
+            self._parse_port(self.peer_signaling_port_input.text()),
+            self._parse_port(self.peer_audio_port_input.text()),
+        )
+
+    def _apply_local_listener_settings(self) -> None:
+        signaling_port, audio_port = self._parse_local_ports()
+        self.call_manager.restart_listener(signaling_port=signaling_port, audio_port=audio_port)
+        self.statusBar().showMessage(f"Listener active on UDP {signaling_port} (audio {audio_port})")
+
+    def _on_apply_listener_clicked(self) -> None:
         try:
-            self.call_manager.start_listener(signaling_port=signaling_port, audio_port=audio_port)
+            self._refresh_local_ip_label()
+            self._apply_local_listener_settings()
+        except ValueError:
+            QMessageBox.critical(self, "Invalid ports", "Local ports must be integers in range 1..65535.")
         except RuntimeError as exc:
-            QMessageBox.critical(self, "Signaling error", str(exc))
-            self.statusBar().showMessage("ERROR: failed to start signaling")
+            QMessageBox.critical(self, "Listener error", str(exc))
 
     def _on_call_clicked(self) -> None:
-        ip = self.ip_input.text().strip()
-        if not ip:
-            QMessageBox.warning(self, "Missing IP", "Enter peer IP address.")
+        try:
+            ip, signaling_port, audio_port = self._parse_peer_settings()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid peer settings", str(exc))
             return
-
-        parsed = self._parse_ports()
-        if not parsed:
-            return
-        signaling_port, audio_port = parsed
 
         self.call_manager.call(ip=ip, signaling_port=signaling_port, audio_port=audio_port)
 
@@ -146,6 +176,23 @@ class MainWindow(QMainWindow):
 
     def _append_log(self, text: str) -> None:
         self.log_area.appendPlainText(text)
+
+    def _log_device_diagnostics(self) -> None:
+        try:
+            input_devices = list_input_devices()
+            output_devices = list_output_devices()
+            if not input_devices:
+                self.events.log.emit("warning: no input audio devices found")
+            if not output_devices:
+                self.events.log.emit("warning: no output audio devices found")
+
+            default_in = get_default_input_device()
+            default_out = get_default_output_device()
+
+            self.events.log.emit(f"default input device: {get_device_name(default_in)}")
+            self.events.log.emit(f"default output device: {get_device_name(default_out)}")
+        except Exception as exc:  # noqa: BLE001
+            self.events.log.emit(f"device diagnostics error: {exc}")
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self.call_manager.shutdown()

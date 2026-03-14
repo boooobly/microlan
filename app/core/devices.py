@@ -25,3 +25,15 @@ def get_default_input_device() -> Any:
 def get_default_output_device() -> Any:
     defaults = sd.default.device
     return defaults[1] if isinstance(defaults, (list, tuple)) else defaults
+
+
+def get_device_name(device_index: Any) -> str:
+    try:
+        if device_index is None:
+            return "Unknown"
+        if isinstance(device_index, str):
+            return device_index
+        info = sd.query_devices(device_index)
+        return str(info.get("name", "Unknown"))
+    except Exception:  # noqa: BLE001
+        return "Unknown"
