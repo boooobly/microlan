@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+APP_NAME = "LAN голосовые звонки"
+APP_VERSION = "0.2.0"
+APP_ORG = "Microlan"
+APP_ICON_RELATIVE_PATH = "assets/icon.ico"
+
 SAMPLE_RATE = 48_000
 CHANNELS = 1
 DTYPE = "int16"

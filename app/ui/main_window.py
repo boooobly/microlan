@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -23,6 +24,9 @@ from PySide6.QtWidgets import (
 from app.core.audio_processing import noise_suppression_is_available
 from app.core.call_manager import CallManager
 from app.core.config import (
+    APP_ICON_RELATIVE_PATH,
+    APP_NAME,
+    APP_VERSION,
     DEFAULT_AUDIO_PORT,
     DEFAULT_SIGNALING_PORT,
     MIC_GAIN_DEFAULT,
@@ -39,6 +43,7 @@ from app.core.devices import (
     list_output_devices_with_indices,
 )
 from app.core.i18n import ERROR_TEXTS, UI_TEXTS, format_status_line
+from app.core.settings import AppSettingsData, SettingsStore
 from app.core.states import CallState
 from app.core.utils import format_log_line
 
@@ -52,8 +57,8 @@ class UiEvents(QObject):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(UI_TEXTS["window_title"])
-        self.resize(860, 760)
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
+        self.resize(860, 820)
 
         self.events = UiEvents()
         self.events.state_changed.connect(self._on_state_changed)
@@ -66,16 +71,25 @@ class MainWindow(QMainWindow):
             on_input_level=lambda level: self.events.input_level.emit(level),
         )
 
+        self._settings_store = SettingsStore()
+        self._is_initializing = True
+
         self._input_devices: list[tuple[int, dict]] = []
         self._output_devices: list[tuple[int, dict]] = []
 
         self._build_ui()
+        self._try_apply_icon()
         self._refresh_local_ip()
-        self._refresh_devices()
         self._refresh_noise_suppression_status()
+        self._loaded_settings = self._load_settings_to_ui()
+        self._refresh_devices()
+        self._apply_saved_device_selection(self._loaded_settings)
         self._apply_audio_settings()
         self._log_device_diagnostics()
         self._restart_listener()
+        self._save_current_settings()
+        self._update_diagnostics()
+        self._is_initializing = False
 
     def _build_ui(self) -> None:
         central = QWidget(self)
@@ -171,6 +185,18 @@ class MainWindow(QMainWindow):
         audio_form.addRow(UI_TEXTS["label_input_level"], self.input_level_label)
         root.addWidget(audio_group)
 
+        diagnostics_group = QGroupBox(UI_TEXTS["group_diagnostics"])
+        diagnostics_form = QFormLayout(diagnostics_group)
+        self.diag_version_label = QLabel(f"{APP_NAME} v{APP_VERSION}")
+        self.diag_listener_label = QLabel(UI_TEXTS["listener_stopped"])
+        self.diag_noise_label = QLabel(UI_TEXTS["unknown"])
+        self.diag_devices_label = QLabel(UI_TEXTS["unknown"])
+        diagnostics_form.addRow(UI_TEXTS["label_diag_version"], self.diag_version_label)
+        diagnostics_form.addRow(UI_TEXTS["label_diag_listener"], self.diag_listener_label)
+        diagnostics_form.addRow(UI_TEXTS["label_diag_noise"], self.diag_noise_label)
+        diagnostics_form.addRow(UI_TEXTS["label_diag_devices"], self.diag_devices_label)
+        root.addWidget(diagnostics_group)
+
         self.status_label = QLabel(UI_TEXTS["status_init"])
         root.addWidget(self.status_label)
 
@@ -186,6 +212,12 @@ class MainWindow(QMainWindow):
         self.accept_button.clicked.connect(self.call_manager.accept)
         self.decline_button.clicked.connect(self.call_manager.decline)
 
+        self.local_signaling_port_input.editingFinished.connect(self._save_current_settings)
+        self.local_audio_port_input.editingFinished.connect(self._save_current_settings)
+        self.peer_ip_input.editingFinished.connect(self._save_current_settings)
+        self.peer_signaling_port_input.editingFinished.connect(self._save_current_settings)
+        self.peer_audio_port_input.editingFinished.connect(self._save_current_settings)
+
         self.input_device_combo.currentIndexChanged.connect(self._on_audio_controls_changed)
         self.output_device_combo.currentIndexChanged.connect(self._on_audio_controls_changed)
         self.mic_gain_slider.valueChanged.connect(self._on_audio_controls_changed)
@@ -193,6 +225,11 @@ class MainWindow(QMainWindow):
         self.noise_gate_slider.valueChanged.connect(self._on_audio_controls_changed)
         self.noise_suppression_enabled.checkStateChanged.connect(self._on_audio_controls_changed)
         self.mute_mic_checkbox.checkStateChanged.connect(self._on_audio_controls_changed)
+
+    def _try_apply_icon(self) -> None:
+        icon = QIcon(APP_ICON_RELATIVE_PATH)
+        if not icon.isNull():
+            self.setWindowIcon(icon)
 
     def _parse_port(self, text: str) -> int:
         value = int(text.strip())
@@ -234,22 +271,40 @@ class MainWindow(QMainWindow):
             self._refresh_devices()
             self._restart_listener()
             self._apply_audio_settings()
+            self._save_current_settings()
         except ValueError as exc:
             QMessageBox.warning(self, ERROR_TEXTS["title_invalid_local"], str(exc))
+            self.events.log.emit(format_log_line(f"ошибка локальных настроек: {exc}"))
         except RuntimeError as exc:
             QMessageBox.critical(self, ERROR_TEXTS["title_listener_error"], str(exc))
+            self.events.log.emit(format_log_line(f"ошибка запуска listener: {exc}"))
 
     def _restart_listener(self) -> None:
         signaling_port, audio_port = self._parse_local()
         self.call_manager.restart_listener(signaling_port=signaling_port, audio_port=audio_port)
+        self._update_diagnostics()
 
     def _on_call(self) -> None:
         try:
             ip, sig_port, audio_port = self._parse_peer()
+            self._validate_before_call()
         except ValueError as exc:
-            QMessageBox.warning(self, ERROR_TEXTS["title_invalid_peer"], str(exc))
+            QMessageBox.warning(self, ERROR_TEXTS["title_precheck_failed"], str(exc))
+            self.events.log.emit(format_log_line(f"проверка перед звонком не пройдена: {exc}"))
             return
+
         self.call_manager.call(ip=ip, signaling_port=sig_port, audio_port=audio_port)
+        self._save_current_settings()
+
+    def _validate_before_call(self) -> None:
+        if not self.peer_ip_input.text().strip():
+            raise ValueError(ERROR_TEXTS["err_peer_ip_required"])
+        if not self.call_manager.signaling:
+            raise ValueError(ERROR_TEXTS["err_listener_required"])
+        if self._selected_output_device_index() is None:
+            raise ValueError(ERROR_TEXTS["err_output_required"])
+        if not self.mute_mic_checkbox.isChecked() and self._selected_input_device_index() is None:
+            raise ValueError(ERROR_TEXTS["err_input_required"])
 
     def _refresh_local_ip(self) -> None:
         self.local_ip_label.setText(self.call_manager.get_local_ip())
@@ -273,34 +328,31 @@ class MainWindow(QMainWindow):
         for index, info in self._output_devices:
             self.output_device_combo.addItem(human_device_label(index, info), index)
 
-        self._select_combo_by_value(self.input_device_combo, selected_in if selected_in is not None else default_in)
-        self._select_combo_by_value(self.output_device_combo, selected_out if selected_out is not None else default_out)
+        in_target = selected_in if selected_in is not None else default_in
+        out_target = selected_out if selected_out is not None else default_out
+        self._select_combo_by_value(self.input_device_combo, in_target)
+        self._select_combo_by_value(self.output_device_combo, out_target)
 
         self.input_device_combo.blockSignals(False)
         self.output_device_combo.blockSignals(False)
 
-        if self._input_devices:
-            self.events.log.emit(
-                format_log_line(f"выбрано устройство ввода: {get_device_name(self._selected_input_device_index())}")
-            )
-        if self._output_devices:
-            self.events.log.emit(
-                format_log_line(f"выбрано устройство вывода: {get_device_name(self._selected_output_device_index())}")
-            )
+        self._update_diagnostics()
 
     @staticmethod
-    def _select_combo_by_value(combo: QComboBox, value: int | None) -> None:
+    def _select_combo_by_value(combo: QComboBox, value: int | None) -> bool:
         if combo.count() == 0:
-            return
+            return False
         if value is None:
             combo.setCurrentIndex(0)
-            return
+            return True
         found_idx = combo.findData(value)
         combo.setCurrentIndex(found_idx if found_idx >= 0 else 0)
+        return found_idx >= 0
 
     def _on_refresh_devices(self) -> None:
         self._refresh_devices()
         self._apply_audio_settings()
+        self._save_current_settings()
 
     def _refresh_noise_suppression_status(self) -> None:
         status, details, available = self.call_manager.noise_suppression_status()
@@ -311,9 +363,12 @@ class MainWindow(QMainWindow):
             self.noise_suppression_enabled.setChecked(False)
         if not available:
             self.events.log.emit(format_log_line(details))
+        self._update_diagnostics()
 
     def _on_audio_controls_changed(self) -> None:
         self._apply_audio_settings()
+        self._save_current_settings()
+        self._update_diagnostics()
 
     def _apply_audio_settings(self) -> None:
         gain = self.mic_gain_slider.value() / 100.0
@@ -333,6 +388,71 @@ class MainWindow(QMainWindow):
             noise_suppression_enabled=denoise_enabled,
         )
 
+    def _load_settings_to_ui(self) -> AppSettingsData:
+        data = self._settings_store.load()
+
+        local_sig = self._safe_port(data.local_signaling_port, DEFAULT_SIGNALING_PORT, "локальный signaling порт")
+        local_audio = self._safe_port(data.local_audio_port, DEFAULT_AUDIO_PORT, "локальный аудиопорт")
+        peer_sig = self._safe_port(data.peer_signaling_port, DEFAULT_SIGNALING_PORT, "порт signaling второго ПК")
+        peer_audio = self._safe_port(data.peer_audio_port, DEFAULT_AUDIO_PORT, "аудиопорт второго ПК")
+
+        self.local_signaling_port_input.setText(str(local_sig))
+        self.local_audio_port_input.setText(str(local_audio))
+        self.peer_ip_input.setText(data.peer_ip.strip())
+        self.peer_signaling_port_input.setText(str(peer_sig))
+        self.peer_audio_port_input.setText(str(peer_audio))
+
+        self.mic_gain_slider.setValue(max(0, min(300, int(data.mic_gain * 100))))
+        self.noise_gate_enabled.setChecked(bool(data.noise_gate_enabled))
+        self.noise_gate_slider.setValue(max(0, min(200, int(data.noise_gate_threshold * 1000))))
+        self.noise_suppression_enabled.setChecked(bool(data.noise_suppression_enabled))
+        self.mute_mic_checkbox.setChecked(bool(data.mute_microphone))
+        return data
+
+    def _apply_saved_device_selection(self, data: AppSettingsData) -> None:
+        in_ok = self._select_combo_by_value(self.input_device_combo, data.selected_input_device)
+        out_ok = self._select_combo_by_value(self.output_device_combo, data.selected_output_device)
+        if data.selected_input_device is not None and not in_ok:
+            self.events.log.emit(
+                format_log_line("сохраненное устройство ввода недоступно, выбран default")
+            )
+        if data.selected_output_device is not None and not out_ok:
+            self.events.log.emit(
+                format_log_line("сохраненное устройство вывода недоступно, выбран default")
+            )
+
+    def _safe_port(self, value: int, default: int, label: str) -> int:
+        if 1 <= int(value) <= 65535:
+            return int(value)
+        self.events.log.emit(format_log_line(f"некорректный {label} в настройках, применен default {default}"))
+        return default
+
+    def _save_current_settings(self) -> None:
+        if self._is_initializing:
+            return
+
+        settings = AppSettingsData(
+            local_signaling_port=self._safe_port_or_default(self.local_signaling_port_input.text(), DEFAULT_SIGNALING_PORT),
+            local_audio_port=self._safe_port_or_default(self.local_audio_port_input.text(), DEFAULT_AUDIO_PORT),
+            peer_ip=self.peer_ip_input.text().strip(),
+            peer_signaling_port=self._safe_port_or_default(self.peer_signaling_port_input.text(), DEFAULT_SIGNALING_PORT),
+            peer_audio_port=self._safe_port_or_default(self.peer_audio_port_input.text(), DEFAULT_AUDIO_PORT),
+            selected_input_device=self._selected_input_device_index(),
+            selected_output_device=self._selected_output_device_index(),
+            mic_gain=self.mic_gain_slider.value() / 100.0,
+            noise_gate_enabled=self.noise_gate_enabled.isChecked(),
+            noise_gate_threshold=self.noise_gate_slider.value() / 1000.0,
+            noise_suppression_enabled=self.noise_suppression_enabled.isChecked(),
+            mute_microphone=self.mute_mic_checkbox.isChecked(),
+        )
+        self._settings_store.save(settings)
+
+    def _safe_port_or_default(self, value: str, default: int) -> int:
+        try:
+            return self._safe_port(int(value.strip()), default, "порт")
+        except (ValueError, TypeError):
+            return default
+
     def _on_state_changed(self, state_value: str, message: str) -> None:
         state = CallState(state_value)
         self.status_label.setText(format_status_line(state.value, message))
@@ -340,6 +460,7 @@ class MainWindow(QMainWindow):
         self.accept_button.setEnabled(state == CallState.RINGING)
         self.decline_button.setEnabled(state == CallState.RINGING)
         self.hangup_button.setEnabled(state in {CallState.CALLING, CallState.RINGING, CallState.IN_CALL})
+        self._update_diagnostics()
 
     def _on_input_level(self, level: float) -> None:
         self.input_level_label.setText(f"{UI_TEXTS['label_input_level']}: {level:.3f}")
@@ -362,6 +483,16 @@ class MainWindow(QMainWindow):
             format_log_line(f"устройство вывода по умолчанию: {get_device_name(get_default_output_device_index())}")
         )
 
+    def _update_diagnostics(self) -> None:
+        self.diag_listener_label.setText(
+            UI_TEXTS["listener_running"] if self.call_manager.signaling else UI_TEXTS["listener_stopped"]
+        )
+        self.diag_noise_label.setText(self.noise_suppression_status.text())
+        in_name = get_device_name(self._selected_input_device_index())
+        out_name = get_device_name(self._selected_output_device_index())
+        self.diag_devices_label.setText(f"Ввод: {in_name}; Вывод: {out_name}")
+
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._save_current_settings()
         self.call_manager.shutdown()
         super().closeEvent(event)

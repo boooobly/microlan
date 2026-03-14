@@ -15,6 +15,7 @@ STATE_LABELS: dict[str, str] = {
 
 UI_TEXTS = {
     "window_title": "LAN голосовые звонки",
+    "group_diagnostics": "Диагностика",
     "group_local": "Локальные настройки",
     "group_devices": "Аудиоустройства",
     "group_peer": "Настройки второго ПК",
@@ -41,6 +42,12 @@ UI_TEXTS = {
     "label_noise_suppression_status": "Состояние:",
     "label_mic_mute": "Микрофон",
     "label_input_level": "Уровень сигнала",
+    "label_diag_version": "Версия приложения",
+    "label_diag_listener": "Статус listener",
+    "label_diag_noise": "Шумоподавление",
+    "label_diag_devices": "Активные устройства",
+    "listener_running": "запущен",
+    "listener_stopped": "не запущен",
     "checkbox_noise_gate": "Шумовой порог включен",
     "checkbox_noise_suppression": "Шумоподавление",
     "checkbox_mute": "Выключить микрофон",
@@ -56,6 +63,10 @@ ERROR_TEXTS = {
     "title_invalid_peer": "Некорректные настройки второго ПК",
     "err_port_range": "Порт должен быть в диапазоне 1..65535",
     "err_peer_ip_required": "Укажите IP второго ПК",
+    "title_precheck_failed": "Нельзя начать звонок",
+    "err_listener_required": "Сначала запустите listener кнопкой «Применить / Перезапустить прослушивание».",
+    "err_output_required": "Не найдено доступное устройство вывода.",
+    "err_input_required": "Не найдено доступное устройство ввода (или включите mute микрофона).",
 }
 
 
