@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.core.audio_engine import AudioEngine
+from app.core.audio_processing import (
+    noise_suppression_backend_details,
+    noise_suppression_backend_status_text,
+    noise_suppression_is_available,
+)
 from app.core.config import CALL_TIMEOUT_SECONDS, DEFAULT_AUDIO_PORT, DEFAULT_SIGNALING_PORT
+from app.core.devices import get_device_name, resolve_device_index_or_default
 from app.core.signaling import SignalingClient, build_message, detect_local_ip
 from app.core.states import CallState
 
@@ -63,16 +69,40 @@ class CallManager:
 
     def update_audio_settings(
         self,
+        selected_input_device: int | None,
+        selected_output_device: int | None,
+        mute_enabled: bool,
         mic_gain: float,
         noise_gate_enabled: bool,
         noise_gate_threshold: float,
         noise_suppression_enabled: bool,
     ) -> None:
+        input_device = resolve_device_index_or_default(
+            selected_input_device,
+            direction="input",
+            on_log=self.on_log,
+        )
+        output_device = resolve_device_index_or_default(
+            selected_output_device,
+            direction="output",
+            on_log=self.on_log,
+        )
+
         self.audio_engine.update_settings(
+            selected_input_device=input_device,
+            selected_output_device=output_device,
+            mute_enabled=mute_enabled,
             mic_gain=mic_gain,
             noise_gate_enabled=noise_gate_enabled,
             noise_gate_threshold=noise_gate_threshold,
             noise_suppression_enabled=noise_suppression_enabled,
+        )
+
+    def noise_suppression_status(self) -> tuple[str, str, bool]:
+        return (
+            noise_suppression_backend_status_text(),
+            noise_suppression_backend_details(),
+            noise_suppression_is_available(),
         )
 
     def call(self, ip: str, signaling_port: int, audio_port: int) -> None:
@@ -84,6 +114,10 @@ class CallManager:
             return
 
         self.current_peer = Peer(ip=ip, signaling_port=signaling_port, audio_port=audio_port)
+        in_name = get_device_name(self.audio_engine.settings.selected_input_device)
+        out_name = get_device_name(self.audio_engine.settings.selected_output_device)
+        self.on_log(f"audio devices for call: input={in_name}; output={out_name}")
+
         self._send(self.current_peer, "CALL")
         self._set_state(CallState.CALLING, f"Calling {ip}:{signaling_port}")
         self._start_call_timeout()
@@ -171,9 +205,8 @@ class CallManager:
                 self._end_call("Peer ended call")
             return
 
-        if msg_type == "BUSY":
-            if self.state == CallState.CALLING:
-                self._end_call("Peer is busy")
+        if msg_type == "BUSY" and self.state == CallState.CALLING:
+            self._end_call("Peer is busy")
 
     def _send(self, peer: Peer, msg_type: str) -> None:
         if not self.signaling:

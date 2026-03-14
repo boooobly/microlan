@@ -5,6 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core.audio_processing import noise_suppression_is_available
 from app.core.call_manager import CallManager
 from app.core.config import (
     DEFAULT_AUDIO_PORT,
@@ -29,11 +31,12 @@ from app.core.config import (
     NOISE_SUPPRESSION_ENABLED_DEFAULT,
 )
 from app.core.devices import (
-    get_default_input_device,
-    get_default_output_device,
+    get_default_input_device_index,
+    get_default_output_device_index,
     get_device_name,
-    list_input_devices,
-    list_output_devices,
+    human_device_label,
+    list_input_devices_with_indices,
+    list_output_devices_with_indices,
 )
 from app.core.states import CallState
 from app.core.utils import format_log_line
@@ -49,7 +52,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("LAN Voice Calls")
-        self.resize(820, 700)
+        self.resize(860, 760)
 
         self.events = UiEvents()
         self.events.state_changed.connect(self._on_state_changed)
@@ -62,8 +65,13 @@ class MainWindow(QMainWindow):
             on_input_level=lambda level: self.events.input_level.emit(level),
         )
 
+        self._input_devices: list[tuple[int, dict]] = []
+        self._output_devices: list[tuple[int, dict]] = []
+
         self._build_ui()
         self._refresh_local_ip()
+        self._refresh_devices()
+        self._refresh_noise_suppression_status()
         self._apply_audio_settings()
         self._log_device_diagnostics()
         self._restart_listener()
@@ -84,6 +92,16 @@ class MainWindow(QMainWindow):
         local_form.addRow("Local IP", self.local_ip_label)
         local_form.addRow(self.apply_listener_button)
         root.addWidget(local_group)
+
+        devices_group = QGroupBox("Audio devices")
+        devices_form = QFormLayout(devices_group)
+        self.input_device_combo = QComboBox()
+        self.output_device_combo = QComboBox()
+        self.refresh_devices_button = QPushButton("Refresh devices")
+        devices_form.addRow("Input device", self.input_device_combo)
+        devices_form.addRow("Output device", self.output_device_combo)
+        devices_form.addRow(self.refresh_devices_button)
+        root.addWidget(devices_group)
 
         peer_group = QGroupBox("Peer settings")
         peer_form = QFormLayout(peer_group)
@@ -125,20 +143,30 @@ class MainWindow(QMainWindow):
         self.noise_gate_slider.setRange(0, 200)
         self.noise_gate_slider.setValue(int(NOISE_GATE_THRESHOLD_DEFAULT * 1000))
         self.noise_gate_label = QLabel(f"{NOISE_GATE_THRESHOLD_DEFAULT:.3f}")
-        ng_row = QHBoxLayout()
-        ng_row.addWidget(self.noise_gate_slider)
-        ng_row.addWidget(self.noise_gate_label)
+        gate_row = QHBoxLayout()
+        gate_row.addWidget(self.noise_gate_slider)
+        gate_row.addWidget(self.noise_gate_label)
 
-        self.noise_suppression_enabled = QCheckBox("Noise suppression enabled (not implemented)")
+        self.noise_suppression_enabled = QCheckBox("Noise suppression enabled")
         self.noise_suppression_enabled.setChecked(NOISE_SUPPRESSION_ENABLED_DEFAULT)
-        self.noise_suppression_enabled.setEnabled(False)
+        self.noise_suppression_status = QLabel("Unavailable")
+
+        suppression_row = QHBoxLayout()
+        suppression_row.addWidget(self.noise_suppression_enabled)
+        suppression_row.addWidget(QLabel("Status:"))
+        suppression_row.addWidget(self.noise_suppression_status)
+        suppression_row.addStretch(1)
+
+        self.mute_mic_checkbox = QCheckBox("Mute microphone")
+        self.mute_mic_checkbox.setChecked(False)
 
         self.input_level_label = QLabel("Input level: 0.000")
 
         audio_form.addRow("Mic sensitivity", gain_row)
         audio_form.addRow("Noise gate", self.noise_gate_enabled)
-        audio_form.addRow("Noise gate threshold", ng_row)
-        audio_form.addRow("Noise suppression", self.noise_suppression_enabled)
+        audio_form.addRow("Noise gate threshold", gate_row)
+        audio_form.addRow("Noise suppression", suppression_row)
+        audio_form.addRow("Microphone", self.mute_mic_checkbox)
         audio_form.addRow("Live", self.input_level_label)
         root.addWidget(audio_group)
 
@@ -151,14 +179,19 @@ class MainWindow(QMainWindow):
         root.addWidget(self.log_area)
 
         self.apply_listener_button.clicked.connect(self._on_apply_listener)
+        self.refresh_devices_button.clicked.connect(self._on_refresh_devices)
         self.call_button.clicked.connect(self._on_call)
         self.hangup_button.clicked.connect(self.call_manager.hangup)
         self.accept_button.clicked.connect(self.call_manager.accept)
         self.decline_button.clicked.connect(self.call_manager.decline)
 
+        self.input_device_combo.currentIndexChanged.connect(self._on_audio_controls_changed)
+        self.output_device_combo.currentIndexChanged.connect(self._on_audio_controls_changed)
         self.mic_gain_slider.valueChanged.connect(self._on_audio_controls_changed)
         self.noise_gate_enabled.checkStateChanged.connect(self._on_audio_controls_changed)
         self.noise_gate_slider.valueChanged.connect(self._on_audio_controls_changed)
+        self.noise_suppression_enabled.checkStateChanged.connect(self._on_audio_controls_changed)
+        self.mute_mic_checkbox.checkStateChanged.connect(self._on_audio_controls_changed)
 
     def _parse_port(self, text: str) -> int:
         value = int(text.strip())
@@ -182,10 +215,24 @@ class MainWindow(QMainWindow):
             self._parse_port(self.peer_audio_port_input.text()),
         )
 
+    def _selected_input_device_index(self) -> int | None:
+        idx = self.input_device_combo.currentIndex()
+        if idx < 0:
+            return None
+        return self.input_device_combo.itemData(idx)
+
+    def _selected_output_device_index(self) -> int | None:
+        idx = self.output_device_combo.currentIndex()
+        if idx < 0:
+            return None
+        return self.output_device_combo.itemData(idx)
+
     def _on_apply_listener(self) -> None:
         try:
             self._refresh_local_ip()
+            self._refresh_devices()
             self._restart_listener()
+            self._apply_audio_settings()
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid local settings", str(exc))
         except RuntimeError as exc:
@@ -206,6 +253,70 @@ class MainWindow(QMainWindow):
     def _refresh_local_ip(self) -> None:
         self.local_ip_label.setText(self.call_manager.get_local_ip())
 
+        self._apply_audio_settings()
+        self.call_manager.call(ip=ip, signaling_port=sig_port, audio_port=audio_port)
+
+    def _refresh_local_ip(self) -> None:
+        self.local_ip_label.setText(self.call_manager.get_local_ip())
+
+    def _refresh_devices(self) -> None:
+        selected_in = self._selected_input_device_index()
+        selected_out = self._selected_output_device_index()
+        default_in = get_default_input_device_index()
+        default_out = get_default_output_device_index()
+
+        self._input_devices = list_input_devices_with_indices()
+        self._output_devices = list_output_devices_with_indices()
+
+        self.input_device_combo.blockSignals(True)
+        self.output_device_combo.blockSignals(True)
+        self.input_device_combo.clear()
+        self.output_device_combo.clear()
+
+        for index, info in self._input_devices:
+            self.input_device_combo.addItem(human_device_label(index, info), index)
+        for index, info in self._output_devices:
+            self.output_device_combo.addItem(human_device_label(index, info), index)
+
+        self._select_combo_by_value(self.input_device_combo, selected_in if selected_in is not None else default_in)
+        self._select_combo_by_value(self.output_device_combo, selected_out if selected_out is not None else default_out)
+
+        self.input_device_combo.blockSignals(False)
+        self.output_device_combo.blockSignals(False)
+
+        if self._input_devices:
+            self.events.log.emit(
+                format_log_line(f"selected input device: {get_device_name(self._selected_input_device_index())}")
+            )
+        if self._output_devices:
+            self.events.log.emit(
+                format_log_line(f"selected output device: {get_device_name(self._selected_output_device_index())}")
+            )
+
+    @staticmethod
+    def _select_combo_by_value(combo: QComboBox, value: int | None) -> None:
+        if combo.count() == 0:
+            return
+        if value is None:
+            combo.setCurrentIndex(0)
+            return
+        found_idx = combo.findData(value)
+        combo.setCurrentIndex(found_idx if found_idx >= 0 else 0)
+
+    def _on_refresh_devices(self) -> None:
+        self._refresh_devices()
+        self._apply_audio_settings()
+
+    def _refresh_noise_suppression_status(self) -> None:
+        status, details, available = self.call_manager.noise_suppression_status()
+        self.noise_suppression_status.setText(status)
+        self.noise_suppression_status.setStyleSheet("color: green;" if available else "color: darkred;")
+        self.noise_suppression_status.setToolTip(details)
+        if not available and self.noise_suppression_enabled.isChecked():
+            self.noise_suppression_enabled.setChecked(False)
+        if not available:
+            self.events.log.emit(format_log_line(details))
+
     def _on_audio_controls_changed(self) -> None:
         self._apply_audio_settings()
 
@@ -215,11 +326,16 @@ class MainWindow(QMainWindow):
         self.mic_gain_label.setText(f"{gain:.2f}x")
         self.noise_gate_label.setText(f"{gate_threshold:.3f}")
 
+        denoise_enabled = self.noise_suppression_enabled.isChecked() and noise_suppression_is_available()
+
         self.call_manager.update_audio_settings(
+            selected_input_device=self._selected_input_device_index(),
+            selected_output_device=self._selected_output_device_index(),
+            mute_enabled=self.mute_mic_checkbox.isChecked(),
             mic_gain=gain,
             noise_gate_enabled=self.noise_gate_enabled.isChecked(),
             noise_gate_threshold=gate_threshold,
-            noise_suppression_enabled=self.noise_suppression_enabled.isChecked(),
+            noise_suppression_enabled=denoise_enabled,
         )
 
     def _on_state_changed(self, state_value: str, message: str) -> None:
@@ -237,24 +353,19 @@ class MainWindow(QMainWindow):
         self.log_area.appendPlainText(message)
 
     def _log_device_diagnostics(self) -> None:
-        try:
-            input_devices = list_input_devices()
-            output_devices = list_output_devices()
-            if not input_devices:
-                self.events.log.emit(format_log_line("warning: no input audio devices found"))
-                self.status_label.setText("Status: WARNING — No input device")
-            if not output_devices:
-                self.events.log.emit(format_log_line("warning: no output audio devices found"))
-                self.status_label.setText("Status: WARNING — No output device")
+        if not self._input_devices:
+            self.events.log.emit(format_log_line("warning: no input audio devices found"))
+            self.status_label.setText("Status: WARNING — No input device")
+        if not self._output_devices:
+            self.events.log.emit(format_log_line("warning: no output audio devices found"))
+            self.status_label.setText("Status: WARNING — No output device")
 
-            self.events.log.emit(
-                format_log_line(f"default input device: {get_device_name(get_default_input_device())}")
-            )
-            self.events.log.emit(
-                format_log_line(f"default output device: {get_device_name(get_default_output_device())}")
-            )
-        except Exception as exc:  # noqa: BLE001
-            self.events.log.emit(format_log_line(f"device diagnostics failed: {exc}"))
+        self.events.log.emit(
+            format_log_line(f"default input device: {get_device_name(get_default_input_device_index())}")
+        )
+        self.events.log.emit(
+            format_log_line(f"default output device: {get_device_name(get_default_output_device_index())}")
+        )
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self.call_manager.shutdown()
