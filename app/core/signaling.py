@@ -38,7 +38,7 @@ def validate_signaling_payload(payload: dict) -> tuple[bool, str]:
     try:
         msg_type = str(payload["type"]).upper()
         if msg_type not in SIGNAL_TYPES:
-            return False, f"unknown type: {msg_type}"
+            return False, f"неизвестный тип: {msg_type}"
         int(payload["signaling_port"])
         int(payload["audio_port"])
         float(payload.get("timestamp", 0))
@@ -69,7 +69,7 @@ class SignalingClient:
             sock.bind((RECEIVE_HOST, self.local_port))
             sock.settimeout(SIGNALING_POLL_TIMEOUT_SEC)
         except OSError as exc:
-            raise RuntimeError(f"cannot start signaling listener on UDP {self.local_port}: {exc}") from exc
+            raise RuntimeError(f"не удалось запустить прослушивание signaling на UDP {self.local_port}: {exc}") from exc
 
         self._socket = sock
         self._stop_event.clear()
@@ -90,12 +90,12 @@ class SignalingClient:
 
     def send(self, host: str, port: int, payload: dict) -> None:
         if not self._socket:
-            raise RuntimeError("signaling is not running")
+            raise RuntimeError("signaling не запущен")
         raw = json.dumps(payload).encode("utf-8")
         try:
             self._socket.sendto(raw, (host, int(port)))
         except OSError as exc:
-            raise RuntimeError(f"failed to send signaling to {host}:{port}: {exc}") from exc
+            raise RuntimeError(f"не удалось отправить signaling на {host}:{port}: {exc}") from exc
 
     def _loop(self) -> None:
         assert self._socket is not None
@@ -111,16 +111,16 @@ class SignalingClient:
             try:
                 payload = json.loads(data.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
-                self.on_log("invalid signaling payload ignored: decode error")
+                self.on_log("некорректный signaling-пакет проигнорирован: ошибка декодирования")
                 continue
 
             if not isinstance(payload, dict):
-                self.on_log("invalid signaling payload ignored: not an object")
+                self.on_log("некорректный signaling-пакет проигнорирован: ожидался объект")
                 continue
 
             is_valid, reason = validate_signaling_payload(payload)
             if not is_valid:
-                self.on_log(f"invalid signaling payload ignored: {reason}")
+                self.on_log(f"некорректный signaling-пакет проигнорирован: {reason}")
                 continue
 
             self.on_message(payload, addr)

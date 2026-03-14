@@ -90,7 +90,7 @@ class AudioEngine:
             sock.bind((RECEIVE_HOST, int(local_audio_port)))
             sock.settimeout(0.2)
         except OSError as exc:
-            raise RuntimeError(f"audio socket error on UDP {local_audio_port}: {exc}") from exc
+            raise RuntimeError(f"ошибка аудиосокета на UDP {local_audio_port}: {exc}") from exc
 
         self._udp_socket = sock
         self._receiver_thread = threading.Thread(target=self._receiver_loop, daemon=True)
@@ -117,13 +117,13 @@ class AudioEngine:
             self._output_stream.start()
         except Exception as exc:  # noqa: BLE001
             self.stop()
-            raise RuntimeError(f"audio stream startup error: {exc}") from exc
+            raise RuntimeError(f"ошибка запуска аудиопотока: {exc}") from exc
 
         self.on_log(
-            "audio stream started: "
-            f"local UDP {local_audio_port} -> {remote_host}:{remote_audio_port}; "
-            f"input_device={self.settings.selected_input_device}, "
-            f"output_device={self.settings.selected_output_device}"
+            "аудиопоток запущен: "
+            f"локальный UDP {local_audio_port} -> {remote_host}:{remote_audio_port}; "
+            f"устройство_ввода={self.settings.selected_input_device}, "
+            f"устройство_вывода={self.settings.selected_output_device}"
         )
 
     def stop(self) -> None:
@@ -187,7 +187,7 @@ class AudioEngine:
                 now = time.monotonic()
                 if now - self._last_overflow_log >= _QUEUE_OVERFLOW_LOG_INTERVAL_SEC:
                     self._last_overflow_log = now
-                    self.on_log("audio playback queue overflow: dropping oldest frame")
+                    self.on_log("переполнение очереди воспроизведения: удален самый старый фрейм")
 
             try:
                 self._incoming.put_nowait(data)
@@ -197,7 +197,7 @@ class AudioEngine:
     def _input_callback(self, indata, frames: int, _time_info, status) -> None:
         try:
             if status:
-                self.on_log(f"input stream warning: {status}")
+                self.on_log(f"предупреждение входного потока: {status}")
             if frames != FRAMES_PER_BUFFER or self._udp_socket is None or self._remote_addr is None:
                 return
 
@@ -225,13 +225,13 @@ class AudioEngine:
 
             self._udp_socket.sendto(outgoing.tobytes(), self._remote_addr)
         except Exception as exc:  # noqa: BLE001
-            self.on_log(f"audio capture callback error: {exc}")
+            self.on_log(f"ошибка callback захвата аудио: {exc}")
             raise sd.CallbackAbort from exc
 
     def _output_callback(self, outdata, frames: int, _time_info, status) -> None:
         try:
             if status:
-                self.on_log(f"output stream warning: {status}")
+                self.on_log(f"предупреждение выходного потока: {status}")
             if frames != FRAMES_PER_BUFFER:
                 outdata.fill(0)
                 return
@@ -251,5 +251,5 @@ class AudioEngine:
 
             outdata[:, 0] = samples
         except Exception as exc:  # noqa: BLE001
-            self.on_log(f"audio playback callback error: {exc}")
+            self.on_log(f"ошибка callback воспроизведения аудио: {exc}")
             raise sd.CallbackAbort from exc
