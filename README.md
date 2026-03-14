@@ -1,15 +1,16 @@
-# Mini LAN Voice Call MVP (Stage 2)
+# LAN Voice Calls (2 PCs in one local network)
 
-Локальное desktop-приложение для голосовых звонков между двумя ПК в одной сети.
+Одно desktop-приложение для локальных голосовых звонков между двумя компьютерами в одной LAN.
 
-Приложение одно и то же на обоих компьютерах:
-- принимает входящий вызов,
-- инициирует исходящий вызов,
-- поддерживает двусторонний разговор,
-- завершает звонок.
+## Стек
+- Python 3.11+
+- PySide6 (QtWidgets GUI)
+- sounddevice
+- numpy
+- UDP signaling + UDP PCM audio
+- optional RNNoise Python binding (для noise suppression)
 
 ## Запуск
-
 ```bash
 python -m venv .venv
 # Windows
@@ -21,69 +22,100 @@ pip install -r requirements.txt
 python -m app.main
 ```
 
-## Интерфейс
+Вход в приложение только через:
+```bash
+python -m app.main
+```
 
-### Local settings
-Используются для **вашего текущего приложения**:
-- `Local signaling port`
-- `Local audio port`
-- `Local IP` (автоопределяется)
-- `Apply / Restart listener`
+## Optional: RNNoise backend
+Noise suppression работает через optional backend.
 
-После изменения локальных портов нажмите **Apply / Restart listener**, чтобы перезапустить listener на новых портах.
+Попробуйте установить один из поддерживаемых binding-пакетов:
+```bash
+pip install rnnoise
+# или
+pip install pyrnnoise
+```
 
-### Peer settings
-Используются для **второго компьютера**:
-- `Peer IP`
-- `Peer signaling port`
-- `Peer audio port`
+Если backend не установлен или не инициализировался:
+- приложение продолжит работать,
+- denoise просто bypass,
+- в UI будет статус `Unavailable`.
 
-## Как узнать свой IP в Windows
+## Как звонить между двумя ПК
+1. Запустите приложение на ПК1 и ПК2.
+2. На каждом ПК в **Local settings** задайте local signaling/audio ports и нажмите **Apply / Restart listener**.
+3. В блоке **Audio devices** выберите нужные input/output устройства (или нажмите **Refresh devices**).
+4. На ПК1 в **Peer settings** укажите IP и порты ПК2.
+5. Нажмите **Call**.
+6. На ПК2 нажмите **Accept** (или **Decline**).
+7. Для завершения нажмите **Hang Up**.
 
-На нужном ПК откройте `cmd` и выполните:
-
+## Как узнать IP в Windows
+Откройте `cmd` и выполните:
 ```bat
 ipconfig
 ```
+Возьмите IPv4 адрес активного адаптера и укажите его как `Peer IP` на другом ПК.
 
-Используйте IPv4 адрес активного сетевого адаптера (например `192.168.1.50`) в поле `Peer IP` на другом ПК.
+## Что есть в GUI
+- **Local settings**: local signaling/audio ports, local IP, restart listener
+- **Audio devices**:
+  - Input device
+  - Output device
+  - Refresh devices
+- **Peer settings**: peer IP + ports
+- **Call controls**: Call / Hang Up / Accept / Decline
+- **Audio controls**:
+  - Mic sensitivity (gain)
+  - Noise gate enabled
+  - Noise gate threshold
+  - Noise suppression enabled + status (Available/Unavailable)
+  - Mute microphone
+  - Live Input level
+- Status label
+- Event log
 
-## Как протестировать звонок между двумя ПК
+## Как работает Mic sensitivity
+`Mic sensitivity` управляет коэффициентом усиления микрофона до отправки в сеть.
+- > 1.0 усиливает сигнал
+- < 1.0 ослабляет сигнал
+- clipping выполняется безопасно
 
-1. Запустите приложение на ПК1 и ПК2.
-2. На каждом ПК задайте свои локальные порты в **Local settings** и нажмите **Apply / Restart listener**.
-3. На ПК1 введите в **Peer settings** IP и порты ПК2.
-4. Нажмите **Call** на ПК1.
-5. На ПК2 нажмите **Accept** (или **Decline**).
-6. Завершите звонок кнопкой **Hang Up**.
+## Как работает Noise gate
+Простой block-level gate:
+- считается RMS блока микрофона (нормированный диапазон 0..1)
+- если RMS ниже `Noise gate threshold`, блок заменяется тишиной
+- если выше — проходит дальше
 
-## Windows Firewall
+## Как работает Noise suppression
+В pipeline после gain/noise gate применяется denoise:
+- если backend доступен и включен — блок обрабатывается RNNoise
+- если backend недоступен — блок отправляется без denoise
+- приложение не падает при отсутствии backend
 
-Если звонок не проходит или нет звука:
-- разрешите `python.exe` в брандмауэре,
-- или откройте входящие UDP-порты для signaling и audio,
-- проверьте, что оба ПК в одной LAN и могут пинговаться.
+## Как работает Mute microphone
+При включенном `Mute microphone`:
+- захват микрофона и индикатор уровня продолжают работать,
+- но в сеть отправляется тишина вместо реального сигнала.
 
-## Если вызов идет, но звука нет
+## Playback resilience
+Добавлена мягкая устойчивость playback:
+- если playback queue пустая — воспроизводится тишина,
+- если queue переполнена — дропаются старые фреймы,
+- overflow логируется с throttling (не слишком часто).
 
-- Проверьте устройства ввода/вывода по умолчанию в системе.
-- Проверьте, что микрофон и динамики не заняты другой программой.
-- Проверьте, что на обоих ПК совпадает ожидаемая схема портов peer/local.
-- Проверьте правила Firewall для UDP audio port.
+## Troubleshooting (есть звонок, но нет звука)
+- Проверьте, что выбраны корректные Input/Output устройства в GUI.
+- Если выбранное устройство исчезло, приложение fallback’ится на default устройство и пишет это в лог.
+- Проверьте default input/output устройства ОС.
+- Убедитесь, что микрофон и динамик не заняты другим приложением.
+- Проверьте, что peer/local порты указаны корректно на обоих ПК.
+- Разрешите `python.exe` в Windows Firewall или откройте UDP порты signaling/audio.
+- Убедитесь, что оба ПК в одной LAN и пингуются.
 
-## Ограничения текущего MVP
-
-- Без Opus (сырой PCM `int16`, mono, 48 kHz, 20 ms)
-- Без jitter buffer
-- Без выбора устройств в GUI (пока используются default-устройства)
-- Без mute и push-to-talk
-- Без NAT traversal / интернет-звонков
-- Без аккаунтов, БД, истории звонков, записи в файлы
-
-## Что дальше
-
-- Opus
-- jitter buffer
-- выбор устройств в GUI
-- mute
-- улучшенная диагностика сети
+## Ограничения текущего этапа
+- Без Opus (raw PCM int16, 48kHz, mono, 20ms)
+- Без интернет-звонков/NAT traversal
+- Без инсталлятора/PyInstaller
+- Без эхоподавления
