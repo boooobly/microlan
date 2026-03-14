@@ -1,1 +1,1 @@
-"""UDP voice MVP package."""
+"""Mini LAN voice call application package."""
