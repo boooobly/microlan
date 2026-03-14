@@ -1,15 +1,15 @@
-# Mini LAN Voice Call MVP (Stage 2)
+# LAN Voice Calls (2 PCs in one local network)
 
-Локальное desktop-приложение для голосовых звонков между двумя ПК в одной сети.
+Одно desktop-приложение для локальных голосовых звонков между двумя компьютерами в одной LAN.
 
-Приложение одно и то же на обоих компьютерах:
-- принимает входящий вызов,
-- инициирует исходящий вызов,
-- поддерживает двусторонний разговор,
-- завершает звонок.
+## Стек
+- Python 3.11+
+- PySide6 (QtWidgets GUI)
+- sounddevice
+- numpy
+- UDP signaling + UDP PCM audio
 
 ## Запуск
-
 ```bash
 python -m venv .venv
 # Windows
@@ -21,69 +21,66 @@ pip install -r requirements.txt
 python -m app.main
 ```
 
-## Интерфейс
+Вход в приложение только через:
+```bash
+python -m app.main
+```
 
-### Local settings
-Используются для **вашего текущего приложения**:
-- `Local signaling port`
-- `Local audio port`
-- `Local IP` (автоопределяется)
-- `Apply / Restart listener`
+## Как звонить между двумя ПК
+1. Запустите приложение на ПК1 и ПК2.
+2. На каждом ПК в **Local settings** задайте:
+   - Local signaling port
+   - Local audio port
+   - Нажмите **Apply / Restart listener**
+3. На ПК1 в **Peer settings** укажите IP и порты ПК2.
+4. Нажмите **Call**.
+5. На ПК2 нажмите **Accept** (или **Decline**).
+6. Для завершения нажмите **Hang Up**.
 
-После изменения локальных портов нажмите **Apply / Restart listener**, чтобы перезапустить listener на новых портах.
-
-### Peer settings
-Используются для **второго компьютера**:
-- `Peer IP`
-- `Peer signaling port`
-- `Peer audio port`
-
-## Как узнать свой IP в Windows
-
-На нужном ПК откройте `cmd` и выполните:
-
+## Как узнать IP в Windows
+Откройте `cmd` и выполните:
 ```bat
 ipconfig
 ```
+Возьмите IPv4 адрес активного адаптера и укажите его как `Peer IP` на другом ПК.
 
-Используйте IPv4 адрес активного сетевого адаптера (например `192.168.1.50`) в поле `Peer IP` на другом ПК.
+## Что есть в GUI
+- **Local settings**: local signaling/audio ports, local IP, restart listener
+- **Peer settings**: peer IP + ports
+- **Call controls**: Call / Hang Up / Accept / Decline
+- **Audio controls**:
+  - Mic sensitivity (gain)
+  - Noise gate enabled
+  - Noise gate threshold
+  - Noise suppression enabled *(пока заглушка, отключено в UI)*
+  - Live Input level
+- Status label
+- Event log
 
-## Как протестировать звонок между двумя ПК
+## Как работает Mic sensitivity
+`Mic sensitivity` управляет коэффициентом усиления микрофона до отправки в сеть.
+- > 1.0 усиливает сигнал
+- < 1.0 ослабляет сигнал
+- clipping выполняется безопасно
 
-1. Запустите приложение на ПК1 и ПК2.
-2. На каждом ПК задайте свои локальные порты в **Local settings** и нажмите **Apply / Restart listener**.
-3. На ПК1 введите в **Peer settings** IP и порты ПК2.
-4. Нажмите **Call** на ПК1.
-5. На ПК2 нажмите **Accept** (или **Decline**).
-6. Завершите звонок кнопкой **Hang Up**.
+## Как работает Noise gate
+Простой block-level gate:
+- считается RMS блока микрофона (нормированный диапазон 0..1)
+- если RMS ниже `Noise gate threshold`, блок заменяется тишиной
+- если выше — пропускается дальше
 
-## Windows Firewall
+## Noise suppression
+`Noise suppression` сейчас заглушка для следующего этапа (под RNNoise/другой denoise backend).
+Pipeline уже подготовлен, но фактическое подавление пока не реализовано.
 
-Если звонок не проходит или нет звука:
-- разрешите `python.exe` в брандмауэре,
-- или откройте входящие UDP-порты для signaling и audio,
-- проверьте, что оба ПК в одной LAN и могут пинговаться.
+## Troubleshooting (есть звонок, но нет звука)
+- Проверьте default input/output устройства ОС.
+- Убедитесь, что микрофон и динамик не заняты другим приложением.
+- Проверьте, что peer/local порты указаны корректно на обоих ПК.
+- Разрешите `python.exe` в Windows Firewall или откройте UDP порты signaling/audio.
+- Убедитесь, что оба ПК в одной LAN и пингуются.
 
-## Если вызов идет, но звука нет
-
-- Проверьте устройства ввода/вывода по умолчанию в системе.
-- Проверьте, что микрофон и динамики не заняты другой программой.
-- Проверьте, что на обоих ПК совпадает ожидаемая схема портов peer/local.
-- Проверьте правила Firewall для UDP audio port.
-
-## Ограничения текущего MVP
-
-- Без Opus (сырой PCM `int16`, mono, 48 kHz, 20 ms)
-- Без jitter buffer
-- Без выбора устройств в GUI (пока используются default-устройства)
-- Без mute и push-to-talk
-- Без NAT traversal / интернет-звонков
-- Без аккаунтов, БД, истории звонков, записи в файлы
-
-## Что дальше
-
-- Opus
-- jitter buffer
-- выбор устройств в GUI
-- mute
-- улучшенная диагностика сети
+## Ограничения текущего этапа
+- Без Opus (raw PCM int16, 48kHz, mono, 20ms)
+- Без интернет-звонков/NAT traversal
+- Без инсталлятора/PyInstaller
