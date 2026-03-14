@@ -248,6 +248,10 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid peer settings", str(exc))
             return
+        self.call_manager.call(ip=ip, signaling_port=sig_port, audio_port=audio_port)
+
+    def _refresh_local_ip(self) -> None:
+        self.local_ip_label.setText(self.call_manager.get_local_ip())
 
         self._apply_audio_settings()
         self.call_manager.call(ip=ip, signaling_port=sig_port, audio_port=audio_port)
