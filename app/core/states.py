@@ -1,4 +1,4 @@
-"""Call states for the MVP state machine."""
+"""State machine states for calls."""
 
 from enum import Enum
 
